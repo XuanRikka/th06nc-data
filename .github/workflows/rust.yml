@@ -1,0 +1,186 @@
+name: Rust Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug output (e.g. set RUST_LOG=debug)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          # - os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
+          # - os: ubuntu-latest
+          #   target: i686-unknown-linux-musl
+          # - os: ubuntu-24.04-arm
+          #   target: aarch64-unknown-linux-musl
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Extract package and bin names
+      id: meta
+      shell: bash
+      run: |
+        PKG_NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name // empty')
+        if [[ -z "$PKG_NAME" ]]; then
+          echo "Error: package name not found" >&2
+          exit 1
+        fi
+        echo "package_name=$PKG_NAME" >> "$GITHUB_OUTPUT"
+    
+        # 2. 使用 `cargo read-manifest`：它只反映 Cargo.toml 中显式声明的 targets！
+        #    输出格式同 metadata 的 package.targets
+        bin_names_json=$(cargo read-manifest | \
+          jq -c '[.targets[] | select(.kind | index("bin")) | .name]')
+    
+        # 输出到 GitHub Output（确保是合法 JSON 字符串）
+        echo "bin_names=$bin_names_json" >> "$GITHUB_OUTPUT"
+    
+        # 可选：调试输出
+        echo "📦 Package: $PKG_NAME"
+        echo "🛠️  Binaries: $bin_names_json"
+
+    - name: Install target
+      if: ${{ !contains(matrix.target, 'musl') }}
+      run: rustup target add ${{ matrix.target }}
+
+    - name: Install Cross
+      run: cargo install cross
+
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+    
+    - name: Build
+      shell: bash
+      run: |
+        target="${{ matrix.target }}"
+        if [[ "$target" != *"windows"* ]] && \
+           ( [[ "$target" == *"i686"* ]] || [[ "$target" == *"musl"* ]] ); then
+          cross build --verbose --release --target "$target"
+        else
+          cargo build --verbose --release --target "$target"
+        fi
+
+    - name: Package binary (Unix)
+      if: ${{ !contains(matrix.target, 'windows') }}
+      shell: bash
+      run: |
+        BINS=()
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          [[ -n "$line" ]] && BINS+=("$line")
+        done < <(echo '${{ steps.meta.outputs.bin_names }}' | jq -r '.[]')
+
+        mkdir -p dist
+        for bin in "${BINS[@]}"; do
+          cp "target/${{ matrix.target }}/release/${bin}" "./dist/"
+        done
+
+        PKG_NAME="${{ steps.meta.outputs.package_name }}"
+        OUTPUT="${PKG_NAME}-${{ matrix.target }}.tar.gz"
+        tar -czf "$OUTPUT" -C dist .
+        printf 'Packets %s\n' "$OUTPUT"
+        printf "${{ steps.meta.outputs.package_name }}-${{ matrix.target }}"
+
+    - name: Package binary (Windows)
+      if: ${{ contains(matrix.target, 'windows') }}
+      shell: pwsh
+      run: |
+        $target = "${{ matrix.target }}"
+        $pkgName = "${{ steps.meta.outputs.package_name }}"
+        $distDir = "dist"
+
+        New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+        $binNames = '${{ steps.meta.outputs.bin_names }}' | ConvertFrom-Json
+        foreach ($bin in $binNames) {
+          if ($bin) {
+            $src = "target/$target/release/$bin.exe"
+            Write-Host "$src $distDir"
+            if (Test-Path $src) {
+              Copy-Item $src -Destination "$distDir/"
+            } else {
+              Write-Error "❌ Binary not found: $src"
+              exit 1
+            }
+          }
+        }
+        
+        $output = ".\$pkgName-$target.zip"
+        Compress-Archive -Path "$distDir/*" -DestinationPath "$output" -Force
+        Write-Host "Packets $output"
+        Write-Host "${{ steps.meta.outputs.package_name }}-${{ matrix.target }}"
+        Write-Host "Current working directory: $($PWD.Path)"
+
+    - name: debug
+      shell: bash
+      run: |
+        find . -maxdepth 4 -type f -o -type d
+        
+    - name: Upload artifact (Unix)
+      if: ${{ !contains(matrix.target, 'windows') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.meta.outputs.package_name }}-${{ matrix.target }}
+        path: ${{ steps.meta.outputs.package_name }}-${{ matrix.target }}.tar.gz
+  
+    - name: Upload artifact (Windows)
+      if: ${{ contains(matrix.target, 'windows') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.meta.outputs.package_name }}-${{ matrix.target }}
+        path: ${{ steps.meta.outputs.package_name }}-${{ matrix.target }}.zip
+
+  upload-release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*/*.tar.gz
+            artifacts/*/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
