@@ -1,13 +1,18 @@
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use anyhow::{anyhow, Result};
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc32fast::hash;
-use ascii::{AsciiString};
 
 use crate::encrytion::{apply_key, key_gen};
 
-const MAIGC: &[u8; 4] = b"PKGL";
+pub const MAIGC: &[u8; 4] = b"PKGL";
+/// 需要注意的是这不是一个完整条目的大小，一个条目是变长的
+/// 实际的大小是 `ENTRY_LENGTH + name_len`
+pub const ENTRY_LENGTH: usize = 32;
+pub const VER0102_ENTRY_LENGTH: usize = 32+11;
+pub const VER0102_DATA: &[u8; 63] = include_bytes!("./assets/ver0102.dat");
+
 
 #[derive(Debug)]
 pub struct Header
@@ -59,10 +64,30 @@ pub struct Entry
     pub stored_size: u64,
     pub offset: u64,
     pub name_len: u16,
-    pub name: AsciiString
+    pub name: String
 }
 
 impl Entry {
+    pub fn new(
+        storage: Storage,
+        key: u32,
+        raw_size: u64,
+        stored_size: u64,
+        offset: u64,
+        name: impl Into<String>,
+    ) -> Entry {
+        let name = name.into();
+        Entry {
+            flags: storage.to_flags(),
+            key,
+            raw_size,
+            stored_size,
+            offset,
+            name_len: name.len() as u16,
+            name,
+        }
+    }
+
     pub fn read<R: Read>(inner: &mut R) -> Result<Entry> {
         let flags = inner.read_u16::<LittleEndian>()?;
         let key = inner.read_u32::<LittleEndian>()?;
@@ -74,7 +99,7 @@ impl Entry {
         let mut buf = vec![0u8; name_len as usize];
         inner.read_exact(&mut buf)?;
 
-        let name = AsciiString::from_ascii(buf)?;
+        let name = String::from_utf8(buf)?;
 
         Ok(Entry {
             flags,
@@ -85,6 +110,17 @@ impl Entry {
             name_len,
             name,
         })
+    }
+
+    pub fn write<W: Write>(self, inner: &mut W) -> Result<()> {
+        inner.write_u16::<LittleEndian>(self.flags)?;
+        inner.write_u32::<LittleEndian>(self.key)?;
+        inner.write_u64::<LittleEndian>(self.raw_size)?;
+        inner.write_u64::<LittleEndian>(self.stored_size)?;
+        inner.write_u64::<LittleEndian>(self.offset)?;
+        inner.write_u16::<LittleEndian>(self.name_len)?;
+        inner.write_all(self.name.as_bytes())?;
+        Ok(())
     }
 
     #[inline]
@@ -105,5 +141,13 @@ impl Storage {
     #[inline]
     pub const fn from_flags(flags: u16) -> Self {
         if flags & 1 != 0 { Storage::Zstd } else { Storage::Stored }
+    }
+
+    #[inline]
+    pub const fn to_flags(self) -> u16 {
+        match self {
+            Storage::Stored => 0,
+            Storage::Zstd => 1,
+        }
     }
 }

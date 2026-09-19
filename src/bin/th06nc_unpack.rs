@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use anyhow::{anyhow, Result};
-use th06nc_unpack::encrytion::{key_gen, XorReader};
-use th06nc_unpack::models::{Header, Storage};
-use th06nc_unpack::utils::archive_key;
+use th06nc_data::encrytion::{key_gen, XorReader};
+use th06nc_data::models::{Header, Storage};
+use th06nc_data::utils::archive_key;
 
 #[derive(Parser, Debug)]
 #[command(name = "th06nc_unpack", version, about = "东方红魔乡新典解包工具")]
