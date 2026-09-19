@@ -11,7 +11,7 @@ pub const MAIGC: &[u8; 4] = b"PKGL";
 /// 实际的大小是 `ENTRY_LENGTH + name_len`
 pub const ENTRY_LENGTH: usize = 32;
 pub const VER0102_ENTRY_LENGTH: usize = 32+11;
-pub const VER0102_DATA: &[u8; 63] = include_bytes!("./assets/ver0102.dat");
+pub const VER0102_DATA: &[u8; 63] = b"This Game is Curtain Fire Shooting Game by Shrine Maiden.\nZUN\n\n";
 
 
 #[derive(Debug)]
