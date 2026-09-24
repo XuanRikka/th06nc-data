@@ -31,10 +31,6 @@ struct Args {
     /// 不压缩
     #[arg(long)]
     no_compress: bool,
-
-    /// 不在末尾追加ver0102
-    #[arg(long)]
-    no_ver0102: bool,
 }
 
 fn main() -> Result<()>
@@ -62,14 +58,18 @@ fn main() -> Result<()>
             {
                 files.push(path);
             }
+            else if filename == "ver0102.dat"
+            {
+                continue;
+            }
             else
             {
-                println!("文件 {} 文件名中存在非ASCII字符，故跳过", path.to_string_lossy())
+                println!("文件 {} 文件名中存在非ASCII字符，故跳过", path.to_string_lossy());
             }
         }
         else
         {
-            println!("遍历文件时出现错误！{}", item.err().unwrap())
+            println!("遍历文件时出现错误！{}", item.err().unwrap());
         }
     }
 
@@ -78,15 +78,10 @@ fn main() -> Result<()>
 
     output_file.write_all(MAIGC)?;
 
-    let mut index_length = files
+    let index_length = files
         .iter()
         .map(|x| x.file_name().unwrap().len()+ENTRY_LENGTH)
-        .sum::<usize>();
-
-    if !args.no_ver0102
-    {
-        index_length = index_length + VER0102_ENTRY_LENGTH;
-    }
+        .sum::<usize>() + VER0102_ENTRY_LENGTH;
 
     output_file.write_u32::<LittleEndian>(index_length as u32)?;
     let index_offset = output_file.stream_position()?;
@@ -109,7 +104,7 @@ fn main() -> Result<()>
 
         let storage_type;
         let stored_size;
-        if !args.no_compress && file_name != "ver0102.dat"
+        if !args.no_compress
         {
             let zstd_stream = Encoder::new(file, args.compress_level)?;
             let mut xor_steam = XorReader::new(zstd_stream, key);
@@ -135,23 +130,21 @@ fn main() -> Result<()>
         output_file.flush()?;
     }
 
-    if !args.no_ver0102
-    {
-        let ver0102_seed = getrandom::u32()?;
-        let mut ver0102_data = VER0102_DATA.to_vec();
-        apply_key(&mut ver0102_data, &key_gen(ver0102_seed));
+    let ver0102_seed = getrandom::u32()?;
+    let mut ver0102_data = VER0102_DATA.to_vec();
+    apply_key(&mut ver0102_data, &key_gen(ver0102_seed));
 
-        let offset_raw = output_file.stream_position()?;
-        let offset = offset_raw + padding_to_16!(offset_raw);
-        output_file.seek(SeekFrom::Start(offset))?;
+    let offset_raw = output_file.stream_position()?;
+    let offset = offset_raw + padding_to_16!(offset_raw);
+    output_file.seek(SeekFrom::Start(offset))?;
 
-        entries.push(Entry::new(
-            Storage::Stored, ver0102_seed,
-            VER0102_DATA.len() as u64, VER0102_DATA.len() as u64,
-            offset, "ver0102.dat",
-        ));
-        output_file.write_all(&ver0102_data)?;
-    }
+    entries.push(Entry::new(
+        Storage::Stored, ver0102_seed,
+        VER0102_DATA.len() as u64, VER0102_DATA.len() as u64,
+        offset, "ver0102.dat",
+    ));
+    output_file.write_all(&ver0102_data)?;
+
 
     let dat_name = archive_key(&args_output);
     let header_key = key_gen(hash(dat_name.as_bytes()));
