@@ -20,9 +20,8 @@ If you've already decided to do it this way, do you really need me to tell you h
 ## Notes
  - Packing encryption is tightly coupled to the file name — unless you know what you are doing, do not rename files.
  - The package format has no concept of paths, so if two files in your packing directory share the same name, the behavior is undefined.
- - Packed file names must be pure ASCII.
- - Every archive always has a `ver0102.dat` entry at the end. If that file is present in your directory when repacking, pass `--no-ver0102` to avoid storing it twice.
- - An archive must contain a `ver0102.dat` at the end.
+ - Packed file names must be pure ASCII. 
+ - - An archive must contain a `ver0102.dat` at the end.
 
 ## Credits
  - Jun'ya Ota, the creator of the Touhou Project series, and every secondary creator of the Touhou series.
