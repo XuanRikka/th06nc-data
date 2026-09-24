@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{BufReader, Write};
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom};
@@ -51,12 +52,18 @@ fn main() -> Result<()>
     }
 
     let mut files = Vec::new();
+    let mut filename_set = HashSet::new();
     for item in walk_files(&args_input) {
         if let Ok(path) = item {
             let filename = path.file_name().unwrap();
-            if filename.is_ascii()
+            if filename.is_ascii() && !filename_set.contains(filename)
             {
+                filename_set.insert(filename.to_owned());
                 files.push(path);
+            }
+            else if filename_set.contains(filename)
+            {
+                println!("文件 {} 因文件名重复被跳过！", path.to_string_lossy());
             }
             else if filename == "ver0102.dat"
             {
@@ -65,6 +72,7 @@ fn main() -> Result<()>
             else
             {
                 println!("文件 {} 文件名中存在非ASCII字符，故跳过", path.to_string_lossy());
+                continue;
             }
         }
         else
